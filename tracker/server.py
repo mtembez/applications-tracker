@@ -924,19 +924,65 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       return str.substring(0, 2).toUpperCase();
     }
 
+    const SEED_DATA = [
+      { id: 1, company: "Microsoft ADC", role: "Cloud & OS Infrastructure Engineer", location_type: "NAIROBI", compensation: "KES 450,000", channel: "Referral", status: "APPLIED", job_url: "https://careers.microsoft.com", notes: "Focus on Linux internals and distributed systems", applied_at: "2026-11-02T05:13:11Z", last_activity_at: "2026-11-02T05:13:11Z", timeline: [{ event_type: "CREATED", details: "Application recorded with status APPLIED", created_at: "2026-11-02T05:13:11Z" }] },
+      { id: 2, company: "Safaricom PLC", role: "Platform SRE Engineer", location_type: "NAIROBI", compensation: "KES 350,000", channel: "Careers Portal", status: "SCREENING", job_url: "https://www.safaricom.co.ke/careers", notes: "M-Pesa backend infrastructure telemetry", applied_at: "2026-11-02T05:13:11Z", last_activity_at: "2026-11-02T05:13:11Z", timeline: [{ event_type: "CREATED", details: "Application recorded with status APPLIED", created_at: "2026-11-02T05:13:11Z" }] },
+      { id: 3, company: "Deel", role: "Senior Backend Engineer (Python/FastAPI)", location_type: "REMOTE_EMEA", compensation: "$5,000/mo", channel: "Wellfound", status: "TECHNICAL", job_url: "https://www.deel.com/careers", notes: "Async microservices & compliance pipelines", applied_at: "2026-11-02T05:13:11Z", last_activity_at: "2026-11-02T05:13:11Z", timeline: [{ event_type: "CREATED", details: "Application recorded with status APPLIED", created_at: "2026-11-02T05:13:11Z" }] },
+      { id: 4, company: "Alignerr", role: "AI Coding & Systems Reasoning Specialist", location_type: "REMOTE_GLOBAL", compensation: "$45/hr", channel: "Direct Assessment", status: "OFFER", job_url: "https://alignerr.com", notes: "High-tier code evaluation and red-teaming", applied_at: "2026-11-02T05:13:11Z", last_activity_at: "2026-11-02T05:13:11Z", timeline: [{ event_type: "CREATED", details: "Application recorded with status APPLIED", created_at: "2026-11-02T05:13:11Z" }] }
+    ];
+
+    let isOfflineMode = (window.location.protocol === 'file:' || window.location.hostname.includes('github.io'));
+
+    function getStoredApps() {
+      const stored = localStorage.getItem('apptracker_data');
+      if (stored) return JSON.parse(stored);
+      localStorage.setItem('apptracker_data', JSON.stringify(SEED_DATA));
+      return SEED_DATA;
+    }
+
+    function saveStoredApps(data) {
+      localStorage.setItem('apptracker_data', JSON.stringify(data));
+    }
+
+    function computeLocalMetrics(apps) {
+      const total = apps.length;
+      let interviews = 0, offers = 0, rejections = 0;
+      apps.forEach(a => {
+        if (['SCREENING', 'TECHNICAL', 'FINAL_ROUND', 'OFFER'].includes(a.status)) interviews++;
+        if (a.status === 'OFFER') offers++;
+        if (['REJECTED', 'WITHDRAWN'].includes(a.status)) rejections++;
+      });
+      return {
+        total_applications: total,
+        active_applications: total - rejections,
+        interview_count: interviews,
+        offer_count: offers,
+        rejection_count: rejections,
+        interview_rate_pct: total > 0 ? Math.round((interviews/total)*1000)/10 : 0.0,
+        offer_rate_pct: total > 0 ? Math.round((offers/total)*1000)/10 : 0.0
+      };
+    }
+
     async function fetchData() {
       try {
+        if (isOfflineMode) throw new Error("Offline host");
         const [appsRes, metricsRes] = await Promise.all([
           fetch('/api/applications'),
           fetch('/api/metrics')
         ]);
+        if (!appsRes.ok || !metricsRes.ok) throw new Error("API failed");
         applications = await appsRes.json();
         const metrics = await metricsRes.json();
         renderSidebarBadges(metrics);
         renderMetricsStrip(metrics);
         renderView();
       } catch (err) {
-        console.error("Fetch error:", err);
+        isOfflineMode = true;
+        applications = getStoredApps();
+        const metrics = computeLocalMetrics(applications);
+        renderSidebarBadges(metrics);
+        renderMetricsStrip(metrics);
+        renderView();
       }
     }
 
@@ -1121,6 +1167,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     async function quickAdvance(e, id, nextStatus) {
       e.stopPropagation();
+      if (isOfflineMode) {
+        const app = applications.find(a => a.id === id);
+        if (app) {
+          app.status = nextStatus;
+          app.last_activity_at = new Date().toISOString();
+          app.timeline = app.timeline || [];
+          app.timeline.push({ event_type: 'STATUS_CHANGE', details: `Quick-advanced to ${nextStatus}`, created_at: new Date().toISOString() });
+          saveStoredApps(applications);
+          const metrics = computeLocalMetrics(applications);
+          renderSidebarBadges(metrics);
+          renderMetricsStrip(metrics);
+          renderView();
+        }
+        return;
+      }
       await fetch(`/api/applications/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1136,9 +1197,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     /* Drawer handlers */
     async function openDrawer(id) {
       activeAppId = id;
-      const res = await fetch(`/api/applications/${id}`);
-      if (!res.ok) return;
-      const app = await res.json();
+      let app = null;
+      if (isOfflineMode) {
+        app = applications.find(a => a.id === id);
+      } else {
+        const res = await fetch(`/api/applications/${id}`);
+        if (res.ok) app = await res.json();
+      }
+      if (!app) return;
 
       document.getElementById('dCompany').textContent = app.company;
       document.getElementById('dRole').textContent = app.role;
@@ -1184,6 +1250,22 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     async function saveDrawerStatus() {
       if (!activeAppId) return;
       const newStatus = document.getElementById('dStatusSelect').value;
+      if (isOfflineMode) {
+        const app = applications.find(a => a.id === activeAppId);
+        if (app) {
+          app.status = newStatus;
+          app.last_activity_at = new Date().toISOString();
+          app.timeline = app.timeline || [];
+          app.timeline.push({ event_type: 'STATUS_CHANGE', details: `Status transitioned to ${newStatus}`, created_at: new Date().toISOString() });
+          saveStoredApps(applications);
+          const metrics = computeLocalMetrics(applications);
+          renderSidebarBadges(metrics);
+          renderMetricsStrip(metrics);
+          renderView();
+          openDrawer(activeAppId);
+        }
+        return;
+      }
       await fetch(`/api/applications/${activeAppId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1195,6 +1277,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     async function deleteActiveApp() {
       if (!activeAppId || !confirm("Permanently delete this application?")) return;
+      if (isOfflineMode) {
+        applications = applications.filter(a => a.id !== activeAppId);
+        saveStoredApps(applications);
+        closeDrawer();
+        const metrics = computeLocalMetrics(applications);
+        renderSidebarBadges(metrics);
+        renderMetricsStrip(metrics);
+        renderView();
+        return;
+      }
       await fetch(`/api/applications/${activeAppId}`, { method: 'DELETE' });
       closeDrawer();
       await fetchData();
@@ -1226,6 +1318,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         job_url: document.getElementById('fUrl').value || null,
         notes: document.getElementById('fNotes').value || null
       };
+
+      if (isOfflineMode) {
+        const newId = applications.length ? Math.max(...applications.map(a => a.id)) + 1 : 1;
+        const now = new Date().toISOString();
+        const newApp = {
+          ...payload,
+          id: newId,
+          applied_at: now,
+          last_activity_at: now,
+          timeline: [{ event_type: 'CREATED', details: `Application recorded with status ${payload.status}`, created_at: now }]
+        };
+        applications.unshift(newApp);
+        saveStoredApps(applications);
+        closeModal('newAppModal');
+        document.getElementById('appForm').reset();
+        const metrics = computeLocalMetrics(applications);
+        renderSidebarBadges(metrics);
+        renderMetricsStrip(metrics);
+        renderView();
+        return;
+      }
 
       const res = await fetch('/api/applications', {
         method: 'POST',
