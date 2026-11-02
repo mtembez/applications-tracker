@@ -1371,7 +1371,14 @@ routes = [
     Route("/api/metrics", endpoint=handle_get_metrics, methods=["GET"]),
 ]
 
-app = Starlette(debug=False, routes=routes, on_startup=[db.init_db])
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    db.init_db()
+    yield
+
+app = Starlette(debug=False, routes=routes, lifespan=lifespan)
 
 def run_server(host: str = None, port: int = None):
     import uvicorn
