@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: applications-tracker
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m tracker.server
+    plan: free
+    healthCheckPath: /api/metrics
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
